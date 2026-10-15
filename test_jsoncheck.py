@@ -1,0 +1,119 @@
+import contextlib
+import io
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import jsoncheck
+import make_sample
+
+
+class CheckTests(unittest.TestCase):
+    def test_good_object(self):
+        problems, top = jsoncheck.check(b'{"a": 1, "b": [1, 2]}')
+        self.assertEqual((problems, top), ([], "an object with 2 names"))
+
+    def test_top_level_kinds(self):
+        for data, expected in ((b"[1, 2, 3]", "an array with 3 items"), (b'"hi"', "a string"), (b"12", "a number"),
+                               (b"true", "true or false"), (b"null", "null")):
+            self.assertEqual(jsoncheck.check(data), ([], expected))
+
+    def test_missing_comma_gives_line_column_and_pointer(self):
+        problems, _ = jsoncheck.check(b'{\n  "a": 1\n  "b": 2\n}')
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Line 3, column 3: Expecting ',' delimiter", problems[0])
+        self.assertIn('"b": 2', problems[0])
+        self.assertIn("^", problems[0])
+
+    def test_trailing_comma_is_a_problem(self):
+        problems, _ = jsoncheck.check(b'{"a": 1,}')
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Line 1", problems[0])
+
+    def test_single_quotes_and_comments_are_problems(self):
+        self.assertEqual(len(jsoncheck.check(b"{'a': 1}")[0]), 1)
+        self.assertEqual(len(jsoncheck.check(b'{"a": 1} // note')[0]), 1)
+
+    def test_empty_file_is_a_problem(self):
+        problems, _ = jsoncheck.check(b"")
+        self.assertEqual(len(problems), 1)
+        self.assertIn("Line 1, column 1", problems[0])
+
+    def test_repeated_name_in_one_object(self):
+        problems, top = jsoncheck.check(b'{"a": 1, "b": 2, "a": 3}')
+        self.assertEqual(len(problems), 1)
+        self.assertIn("'a'", problems[0])
+        self.assertEqual(top, "an object with 2 names")
+
+    def test_same_name_in_different_objects_is_fine(self):
+        self.assertEqual(jsoncheck.check(b'[{"a": 1}, {"a": 2}]')[0], [])
+
+    def test_repeated_name_in_nested_object(self):
+        self.assertEqual(len(jsoncheck.check(b'{"x": {"k": 1, "k": 2}}')[0]), 1)
+
+    def test_nan_and_infinity_are_refused(self):
+        for word in (b"NaN", b"Infinity", b"-Infinity"):
+            problems, _ = jsoncheck.check(b'{"v": ' + word + b"}")
+            self.assertEqual(len(problems), 1, word)
+            self.assertIn(word.decode(), problems[0])
+
+    def test_bom_is_reported_and_rest_is_still_checked(self):
+        self.assertEqual(len(jsoncheck.check(b'\xef\xbb\xbf{"ok": true}')[0]), 1)
+        problems, _ = jsoncheck.check(b'\xef\xbb\xbf{"ok": }')
+        self.assertEqual(len(problems), 2)
+
+    def test_not_utf8(self):
+        problems, _ = jsoncheck.check(b'{"a": "caf\xe9"}')
+        self.assertEqual(len(problems), 1)
+        self.assertIn("UTF-8", problems[0])
+
+    def test_deep_nesting_does_not_crash(self):
+        problems, _ = jsoncheck.check(b"[" * 100000 + b"]" * 100000)
+        self.assertEqual(len(problems), 1)
+
+    def test_windows_line_endings_keep_line_numbers(self):
+        problems, _ = jsoncheck.check(b'{\r\n  "a": 1\r\n  "b": 2\r\n}')
+        self.assertIn("Line 3", problems[0])
+
+
+class MainTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.dir = Path(self.tmp.name)
+
+    def run_main(self, args):
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            code = jsoncheck.main(["jsoncheck.py"] + args)
+        return code, buf.getvalue()
+
+    def test_sample_files(self):
+        folder = make_sample.make(self.dir / "sample")
+        self.assertEqual(self.run_main([str(folder / "good.json")])[0], 0)
+        for name in ("broken.json", "repeated.json", "bom.json"):
+            code, out = self.run_main([str(folder / name)])
+            self.assertEqual(code, 1, name)
+            self.assertIn("Problems found: 1", out)
+
+    def test_good_file_message(self):
+        folder = make_sample.make(self.dir / "sample")
+        code, out = self.run_main([str(folder / "good.json")])
+        self.assertIn("No problems found by these checks. Top level: an object with 3 names.", out)
+
+    def test_missing_file_folder_and_no_argument(self):
+        self.assertEqual(self.run_main([str(self.dir / "nothing.json")])[0], 2)
+        self.assertEqual(self.run_main([str(self.dir)])[0], 2)
+        self.assertEqual(self.run_main([])[0], 2)
+
+    def test_file_not_changed(self):
+        folder = make_sample.make(self.dir / "sample")
+        path = folder / "broken.json"
+        before = (path.read_bytes(), os.stat(path).st_mtime_ns)
+        self.run_main([str(path)])
+        self.assertEqual((path.read_bytes(), os.stat(path).st_mtime_ns), before)
+
+
+if __name__ == "__main__":
+    unittest.main()
