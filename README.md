@@ -6,7 +6,7 @@ A small read-only Python tool built step by step. Give it a JSON file and it rep
 
     python make_sample.py                     # makes made-up JSON files in sample/
     python jsoncheck.py sample/broken.json    # report on one file
-    python -m unittest -v                     # eighteen automated tests
+    python -m unittest -v                     # 22 temporary-fixture tests
 
 On Windows, if `python` is not found, use `py`.
 
@@ -15,6 +15,12 @@ On Windows, if `python` is not found, use `py`.
 - `jsoncheck.py` - the tool
 - `make_sample.py` - makes four made-up files: good, missing comma, repeated name, byte order mark
 - `test_jsoncheck.py` - tests
+
+## Setup safety and evidence
+
+Setup creates only a new sample folder and exclusively writes its four fictional JSON files. It refuses existing paths without resetting or replacing data. Start in a new empty lesson folder. Four added collision/repeat checks preserve nested unrelated bytes and modification times. The checker is unchanged. Source paths can follow links and error reports reveal excerpts and paths. Keep private output private.
+
+Two Windows and two Ubuntu recordings pass all 22 tests. Each platform pair differs only in unittest time. Displays use first Windows output. Versions and test-name rendering can differ. The recorder writes the exact visible first/final versions in its own unique temporary folder and removes only that folder. Setup itself refuses a repeat run. These are limited tests, not proof for all filesystems or JSON-consuming applications.
 
 ## Notes
 
