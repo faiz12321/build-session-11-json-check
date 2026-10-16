@@ -7,6 +7,29 @@ It does not check what the data means.
 """
 import json
 import sys
+import stat
+from pathlib import Path
+
+def safe_input(value, directory=False):
+    path = Path(value).absolute()
+    if '..' in path.parts:
+        raise OSError('Parent-traversal paths are unsupported.')
+    for part in [*reversed(path.parents), path]:
+        info = part.lstat()
+        if stat.S_ISLNK(info.st_mode) or getattr(info, 'st_file_attributes', 0) & 0x400:
+            raise OSError('Links/reparse points are unsupported.')
+    info = path.lstat()
+    if directory:
+        if not stat.S_ISDIR(info.st_mode):
+            raise NotADirectoryError('Expected an ordinary directory.')
+    elif not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+        raise OSError('Expected an ordinary singly linked file.')
+    return path
+
+
+
+
+
 
 BOM = b"\xef\xbb\xbf"
 
@@ -82,10 +105,10 @@ def main(argv):
         print("Usage: python jsoncheck.py FILE")
         return 2
     try:
-        with open(argv[1], "rb") as handle:
+        with open(safe_input(argv[1]), "rb") as handle:
             data = handle.read()
     except OSError as error:
-        print(f"Could not read {argv[1]}: {error.strerror}")
+        print(f"Could not read {argv[1]}: {error.strerror or error}")
         return 2
     problems, top = check(data)
     print(f"File: {argv[1]}")
